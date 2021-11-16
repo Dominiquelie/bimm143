@@ -1,0 +1,279 @@
+---
+title: "class15 RNASeq Analysis"
+author: "Dominique Lie (A15470100)"
+date: "11/16/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+1. Bioconductor and DESeq2 setup
+```{r}
+#install.packages("BiocManager)
+#BiocManager::install("DESeq2)
+```
+
+2. Import countData and colData
+
+```{r}
+counts <- read.csv("https://bioboot.github.io/bimm143_W18/class-material/airway_scaledcounts.csv", row.names = 1)
+metadata <-  read.csv("https://bioboot.github.io/bimm143_W18/class-material/airway_metadata.csv")
+```
+
+```{r}
+head(counts)
+head(metadata)
+```
+
+> Q1. How many genes are in this dataset? 
+
+```{r}
+nrow(counts)
+```
+38694 genes 
+
+> Q2. How many 'control' cell lines do we have?
+
+```{r}
+sum(metadata$dex == "control")
+```
+
+4 control
+
+3. Toy differential gene expression
+
+First I need to extract all the "control" columns. Then I will take the rowise mean to get the average count values for all genes in these four experiments. 
+
+```{r}
+control.inds <- metadata$dex == "control"
+control.counts <- counts[, control.inds]
+head(control.counts)
+```
+
+
+```{r}
+control <- metadata[metadata[,"dex"]=="control",]
+control.counts <- counts[ ,control$id]
+control.mean <- rowSums( control.counts )/4 
+head(control.mean)
+```
+
+Or with dplyr pacakge
+```{r}
+library(dplyr)
+control <- metadata %>% filter(dex=="control")
+control.counts <- counts %>% select(control$id) 
+control.mean <- rowSums(control.counts)/4
+head(control.mean)
+```
+
+> Q3. How would you make the above code in either approach more robust?
+
+
+
+> Q4. Follow the same procedure for the treated samples (i.e. calculate the mean per gene across drug treated samples and assign to a labeled vector called treated.mean)
+
+```{r}
+treated <- metadata[metadata[,"dex"]=="treated",]
+treated.counts <- counts[ ,treated$id]
+treated.mean <- rowSums( treated.counts )/4 
+head(treated.mean)
+```
+
+```{r}
+library(dplyr)
+treated <- metadata %>% filter(dex=="treated")
+treated.counts <- counts %>% select(treated$id)
+treated.mean <- rowSums(treated.counts)/4
+head(treated.mean)
+```
+```{r}
+#combine meancount data 
+meancounts <- data.frame(control.mean, treated.mean)
+```
+
+Let's make a quick plot
+> Q5a Create scatter plot showing the mean of the treated samples against the mean of the control samples.
+
+```{r}
+plot(meancounts, xlab = "Control", ylab = "Treated")
+```
+
+> Q5b. You could also use the ggplot2 package to make this figure producing the plot below. What geom_?() function would you use for this plot? 
+
+geom_point
+
+```{r}
+library(ggplot2)
+ggplot(meancounts) +  aes(x = "control.mean", y = "treated.mean") + geom_point()
+```
+> Q6. Try plotting both axes on a log scale. What is the argument to plot that allows you to do this? 
+
+log
+
+This plot indicates that we need a log transformation to see details of our data! 
+
+I am going to replot with log argument 
+
+```{r}
+plot(meancounts, xlab = "Control", ylab = "Treated", log = "xy")
+```
+We often use log2 in this field because it has nice math properties that make interpretation more straightforward
+
+```{r}
+log2(5/10)
+```
+
+Cool we see 0 values for no change and + values for increases and minus values for decreases. This nice property leads us to work with **log2(fold-change)** all the time in the genomics and proteomics field.
+
+```{r}
+meancounts$log2fc <- log2(meancounts[,"treated.mean"]/meancounts[,"control.mean"])
+head(meancounts)
+```
+filter out NaN and -lnf
+
+```{r}
+zero.vals <- which(meancounts[,1:2]==0, arr.ind=TRUE)
+
+to.rm <- unique(zero.vals[,1])
+#remove from meancounts dataframe
+mycounts <- meancounts[-to.rm,]
+head(mycounts)
+```
+
+```{r}
+head(meancounts[,1:2] == 0)
+```
+
+> Q7. What is the purpose of the arr.ind argument in the which() function call above? Why would we then take the first column of the output and need to call the unique() function?
+
+The 'arr.ind = TRUE' gets the columns and rows that have TRUE values (ie. the zero counts in our case). The unique() function ensure that the function doesnt count a row twice if both control and treated have TRUE. 
+
+```{r}
+nrow(mycounts)
+```
+
+
+```{r}
+up.ind <- mycounts$log2fc > 2
+down.ind <- mycounts$log2fc < (-2)
+```
+
+> Q8. Using the up.ind vector above can you determine how many up regulated genes we have at the great than 2 fc level?
+
+```{r}
+sum(up.ind)
+```
+
+> Q9. Using the down.ind vector above can you determine how many down regulated genes we have at the greater than 2 fc level? 
+
+```{r}
+sum(down.ind)
+```
+
+> Q10. Do you trust these results? Why or why not? 
+
+Although we know that there is a down or up change in these genes, we don't know whether the change between the genes are statistically significant and worthy or investigating further.
+
+4. DESeq2 analysis
+
+Let's do this the right way. DESeq2 is an R package specifically for anlyzing count-based NGS data like RNA seq. It is avaliable from Bioconductor.
+```{r}
+library(DESeq2)
+citation("DESeq2")
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData=counts, 
+                              colData=metadata, 
+                              design=~dex)
+#design sets up DESeq2, which one is column treated or control
+dds
+
+```
+```{r}
+dds <- DESeq(dds)
+```
+
+To get at the results here we use th deseq 'results()' function:
+```{r}
+res <- results(dds)
+res
+```
+
+```{r}
+res <- as.data.frame(res)
+View(res)
+```
+
+```{r}
+summary(res)
+```
+
+```{r}
+res05 <- results(dds, alpha = 0.05)
+summary(res05)
+```
+5. Adding annotation data
+
+```{r}
+library("AnnotationDbi")
+#BiocManager::install("org.Hs.eg.db")
+library("org.Hs.eg.db")
+columns(org.Hs.eg.db)
+```
+
+```{r}
+res$symbol <- mapIds(org.Hs.eg.db,keys=row.names(res), keytype="ENSEMBL", column="SYMBOL", multiVals="first")
+
+head(res)
+```
+
+6. Data Visualization: volcano plots
+```{r}
+plot(res$log2FoldChange, log(res$padj))
+```
+This is not a very useful plot. We will replot. 
+
+```{r}
+plot( res$log2FoldChange,  -log(res$padj), 
+      xlab="Log2(FoldChange)",
+      ylab="-Log(P-value)")
+```
+
+```{r}
+plot( res$log2FoldChange,  -log(res$padj), 
+ ylab="-Log(P-value)", xlab="Log2(FoldChange)")
+
+# Add some cut-off lines
+abline(v=c(-2,2), col="darkgray", lty=2)
+abline(h=-log(0.05), col="darkgray", lty=2)
+```
+Finally, let's add some color to this plot to draw attention to the genes (i.e. points) we care about - that is those with large fold-change and low pvalue.
+```{r}
+# Setup our custom point color vector 
+mycols <- rep("gray", nrow(res))
+mycols[ abs(res$log2FoldChange) > 2 ]  <- "red" 
+
+inds <- (res$padj < 0.01) & (abs(res$log2FoldChange) > 2 )
+mycols[ inds ] <- "blue"
+
+# Volcano plot with custom colors 
+plot( res$log2FoldChange,  -log(res$padj), 
+ col=mycols, ylab="-Log(P-value)", xlab="Log2(FoldChange)" )
+
+# Cut-off lines
+abline(v=c(-2,2), col="gray", lty=2)
+abline(h=-log(0.1), col="gray", lty=2)
+```
+```{r}
+plot(res$log2FoldChange, -log(res$padj))
+abline(v = c(-2, +2), col = "gray")
+abline(h = -log(0.05), col = "gray")
+```
+
+```{r}
+#BiocManager::install("EnhancedVolcano")
+library("EnhancedVolcano")
+```
+
