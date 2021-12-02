@@ -2,9 +2,7 @@
 title: "Machine Learning 1"
 author: "Dominique Lie (A15470100)"
 date: "10/21/2021"
-output:
-  pdf_document: default
-  html_document: default
+output: github_document
 ---
 
 First up is clustering methods
